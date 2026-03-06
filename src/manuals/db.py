@@ -10,7 +10,7 @@ from .models import EquipmentManualChatBot
 load_dotenv()
 
 POSTGRES_SERVER: str = os.getenv("POSTGRES_SERVER")
-POSTGRES_PORT: int = os.getenv("POSTGRES_PORT")
+POSTGRES_PORT: int = int(os.getenv("POSTGRES_PORT"))
 POSTGRES_USER: str = os.getenv("POSTGRES_USER")
 POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD")
 POSTGRES_DB: str = os.getenv("POSTGRES_DB")
