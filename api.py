@@ -1,8 +1,11 @@
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, UploadFile, Form, HTTPException, Response
+from fastapi import Depends, FastAPI, File, UploadFile, Form, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from sqlmodel import Session, col, select
@@ -11,10 +14,14 @@ from dataclasses import dataclass
 import os
 import shutil
 import json
+import jwt
+from jwt.exceptions import InvalidTokenError
 
 from .dependencies import AgentManager, ManualContextManager, SessionDep, form_data, get_session, get_chatbot_config, DataStoreManager, FileUploader
 
 from .src.manuals.embeddings import EquipmentManualContextManager
+from .auth import decode_token, get_current_user, hash_password, fake_users_db, get_current_active_user, create_access_token, authenticate_user
+from .src.manuals.models import User, UserInDB
 
 print(os.getcwd())
 
@@ -23,6 +30,17 @@ from .src.manual import get_response
 from .src.manuals.db import create_db_and_tables, engine
 #from .src.manuals.embeddings import AgentWrapper
 from .src.manuals.models import EquipmentManualChatBot, EquipmentManualChatBotFormUpdate, EquipmentManualChatBotForm, EquipmentManualChatBotUpdate
+
+from dotenv import load_dotenv, dotenv_values
+
+from .src.manuals.models import User, UserInDB, Token
+
+load_dotenv()
+AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
+ALGORITHM = os.getenv("ALGORITHM")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
+
+
 
 class Review(BaseModel):
 	num_stars: int
@@ -193,7 +211,6 @@ async def retrieve_chatbots(
 
 
 
-
 @app.get("/chats/{chat_id}")
 async def start_chat(
 	chat_id: int,
@@ -209,8 +226,8 @@ async def start_chat(
 	if not chatbot_config:
 		raise HTTPException(status_code=404, detail="chatbot not found")
 	response.set_cookie(key="collection_name", value=chatbot_config.collection_name)
+	response.set_cookie(key="owner", value=chatbot_config.owner)
 	return chatbot_config
-
 
 @app.patch("/chats/{chat_id}/update", response_model=EquipmentManualChatBot)
 async def update_chat_config(
@@ -281,3 +298,58 @@ async def send_user_query(
 		agent_manager.get_response(user_query),
 		media_type="application/x-ndjson" #media_type="text/event-stream"
 	)
+
+@app.post("/chats/{chat_id}/user_query_v1")
+async def send_user_query_v1(
+	chat_id: int,
+	user_query: Annotated[str, Form()],
+	agent_manager: Annotated[AgentManager, Depends()]
+):
+	"""
+	curl call:
+
+	curl -F "user_query=Who are you?" http://localhost:8000/chats/1/user_query
+	"""
+
+	print("in send_user_query, chat_id is: {}.  user_query is: {}".format(chat_id, user_query))
+
+	# Create agent
+	agent_manager.create_agent()
+
+	# Get response
+	return StreamingResponse(
+		agent_manager.get_response(user_query),
+		media_type="application/x-ndjson" #media_type="text/event-stream"
+	)
+
+# AUTH
+
+@app.post("/token")
+async def login_for_access_token(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+) -> Token:
+    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return Token(access_token=access_token, token_type="bearer")
+
+
+@app.get("/users/me/")
+async def read_users_me(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> User:
+    return current_user
+
+@app.get("/users/me/items/")
+async def read_own_items(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+):
+    return [{"item_id": "Foo", "owner": current_user.username}]
