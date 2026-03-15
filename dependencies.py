@@ -190,3 +190,4 @@ class AgentManager:
         if user_query == None:
             raise HTTPException(status_code=409, detail="no user query")
         return self.agent_wrapper.get_response(user_query)
+
