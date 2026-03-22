@@ -97,7 +97,7 @@ def prompt(prompt: Prompt):
 async def manual(prompt: Prompt):
 	print(f"prompt text is {prompt.message_text}")
 	return StreamingResponse(
-		get_response(prompt.message_text),
+		ge    t_response(prompt.message_text),
 		media_type="application/x-ndjson" #media_type="text/event-stream"
 	)	
 

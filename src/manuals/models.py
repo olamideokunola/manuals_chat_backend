@@ -37,6 +37,7 @@ class EquipmentManualChatBot(EquipmentManualChatBotBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     file_name: str
 
+
 class EquipmentManualChatBotForm(EquipmentManualChatBotBase):
     file: UploadFile | None = None
 
@@ -76,11 +77,47 @@ class TokenData(BaseModel):
     username: str | None = None
 
 
-class User(BaseModel):
+
+# Organisation
+class Organisation(SQLModel):
+    name: str
+    domain: str
+    address: str
+    country: str
+
+class OrganisationInDB(Organisation, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+
+
+# User Models
+class UserBase(SQLModel):
     username: str
     email: str | None = None
-    full_name: str | None = None
+    first_name: str
+    last_name: str
     disabled: bool | None = None
 
-class UserInDB(User):
+class UserInDB(UserBase, table=True):
+    id: int | None = Field(default=None, primary_key=True)
     hashed_password: str
+
+class User(UserBase):
+    id: int
+
+class UserCreateBase(UserBase):
+    username: str
+    email: str
+    first_name: str
+    last_name: str
+    disabled: bool | None = None
+
+class UserCreateForm(UserCreateBase):
+    password: str
+
+
+# Role
+class Role(SQLModel):
+    name: str
+    
+class RoleinDB(Role, table=True):
+    id: int | None = Field(default=None, primary_key=True)
