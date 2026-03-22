@@ -20,8 +20,8 @@ from jwt.exceptions import InvalidTokenError
 from .dependencies import AgentManager, ManualContextManager, SessionDep, form_data, get_session, get_chatbot_config, DataStoreManager, FileUploader
 
 from .src.manuals.embeddings import EquipmentManualContextManager
-from .auth import decode_token, get_current_user, hash_password, fake_users_db, get_current_active_user, create_access_token, authenticate_user
-from .src.manuals.models import User, UserInDB
+from .auth import decode_token, get_current_user, hash_password, fake_users_db, get_current_active_user, create_access_token, authenticate_user, create_user
+from .src.manuals.models import User, UserInDB, UserCreateForm
 
 print(os.getcwd())
 
@@ -322,13 +322,14 @@ async def send_user_query_v1(
 		media_type="application/x-ndjson" #media_type="text/event-stream"
 	)
 
-# AUTH
+# AUTHENTICATION
 
 @app.post("/token")
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+	session: SessionDep
 ) -> Token:
-    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+    user = await authenticate_user(session, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -344,12 +345,38 @@ async def login_for_access_token(
 
 @app.get("/users/me/")
 async def read_users_me(
+	session: SessionDep,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> User:
     return current_user
 
 @app.get("/users/me/items/")
 async def read_own_items(
+	session: SessionDep,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
     return [{"item_id": "Foo", "owner": current_user.username}]
+
+@app.post("/users/create")
+async def create_user_account(
+	data: Annotated[UserCreateForm, Form()], 
+	user: Annotated[UserInDB, Depends(create_user)]
+) -> Token:
+	"""
+	curl call:
+
+	curl -F "username=Who are you?" -F "first_name=FirstName" -F "last_name=LastName" -F "password=testing"  http://localhost:8000/users/create
+	"""
+	print('form_data is: {}'.format(data))
+	print('user is {}'.format(user))
+	if not user:
+		raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="User creation failed",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+	access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+	access_token = create_access_token(
+		data={"sub": user.username}, expires_delta=access_token_expires
+    )
+	return Token(access_token=access_token, token_type="bearer")
