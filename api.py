@@ -21,7 +21,7 @@ from .dependencies import AgentManager, ManualContextManager, SessionDep, form_d
 
 from .src.manuals.embeddings import EquipmentManualContextManager
 from .auth import decode_token, get_current_user, hash_password, fake_users_db, get_current_active_user, create_access_token, authenticate_user, create_user
-from .src.manuals.models import User, UserInDB, UserCreateForm
+from .src.manuals.models import UserWithId, User, UserCreateForm, Token
 
 print(os.getcwd())
 
@@ -32,8 +32,6 @@ from .src.manuals.db import create_db_and_tables, engine
 from .src.manuals.models import EquipmentManualChatBot, EquipmentManualChatBotFormUpdate, EquipmentManualChatBotForm, EquipmentManualChatBotUpdate
 
 from dotenv import load_dotenv, dotenv_values
-
-from .src.manuals.models import User, UserInDB, Token
 
 load_dotenv()
 AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
@@ -97,7 +95,7 @@ def prompt(prompt: Prompt):
 async def manual(prompt: Prompt):
 	print(f"prompt text is {prompt.message_text}")
 	return StreamingResponse(
-		ge    t_response(prompt.message_text),
+		get_response(prompt.message_text),
 		media_type="application/x-ndjson" #media_type="text/event-stream"
 	)	
 
@@ -346,21 +344,21 @@ async def login_for_access_token(
 @app.get("/users/me/")
 async def read_users_me(
 	session: SessionDep,
-    current_user: Annotated[User, Depends(get_current_active_user)],
-) -> User:
+    current_user: Annotated[UserWithId, Depends(get_current_active_user)],
+) -> UserWithId:
     return current_user
 
 @app.get("/users/me/items/")
 async def read_own_items(
 	session: SessionDep,
-    current_user: Annotated[User, Depends(get_current_active_user)],
+    current_user: Annotated[UserWithId, Depends(get_current_active_user)],
 ):
     return [{"item_id": "Foo", "owner": current_user.username}]
 
 @app.post("/users/create")
 async def create_user_account(
 	data: Annotated[UserCreateForm, Form()], 
-	user: Annotated[UserInDB, Depends(create_user)]
+	user: Annotated[User, Depends(create_user)]
 ) -> Token:
 	"""
 	curl call:

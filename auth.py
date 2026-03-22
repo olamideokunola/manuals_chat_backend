@@ -12,7 +12,7 @@ import os
 
 from sqlmodel import select
 
-from .src.manuals.models import User, UserInDB, TokenData, UserCreateForm 
+from .src.manuals.models import UserWithId, User, TokenData, UserCreateForm 
 from .dependencies import SessionDep
 
 load_dotenv()
@@ -52,13 +52,13 @@ def get_password_hash(password):
     return password_hash.hash(password)
 
 async def get_user_by_username(username: str, session: SessionDep):
-    find_user_stmt = select(UserInDB).where(UserInDB.username == username)
+    find_user_stmt = select(User).where(User.username == username)
     results = session.exec(find_user_stmt)
     user = results.first()
     return user
 
 async def get_user_by_email(data: UserCreateForm, session: SessionDep):
-    find_user_stmt = select(UserInDB).where(UserInDB.email == data.email)
+    find_user_stmt = select(User).where(User.email == data.email)
     results = session.exec(find_user_stmt)
     if not results:
         return None
@@ -122,7 +122,7 @@ async def get_current_user(
 
 
 async def get_current_active_user(
-    current_user: Annotated[User, Depends(get_current_user)], 
+    current_user: Annotated[UserWithId, Depends(get_current_user)], 
     session: SessionDep
 ):
     if current_user.disabled:
@@ -134,7 +134,7 @@ async def get_current_active_user(
 async def create_user(
     data: UserCreateForm, 
     session: SessionDep,
-    existing_user: Annotated[User, Depends(get_user_by_email)]
+    existing_user: Annotated[UserWithId, Depends(get_user_by_email)]
 ):
     """
     curl -F "username=uname" -F "first_name=FirstName" -F "last_name=LastName" -F "password=testing" -F "email=mymail" -F "disabled=False"  http://localhost:8000/users/create
@@ -144,7 +144,7 @@ async def create_user(
         raise HTTPException(status_code=409, detail="user exists")  
     
     hashed_password = get_password_hash(data.password)
-    user = UserInDB(
+    user = User(
         username=data.username,
         email=data.email,
         first_name=data.first_name,
