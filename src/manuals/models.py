@@ -1,7 +1,7 @@
 
 from fastapi import UploadFile
 from pydantic import BaseModel
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlmodel import Field, Relationship, Session, SQLModel, create_engine, select
 
 
 
@@ -23,6 +23,16 @@ class Organisation(SQLModel, table=True):
     address: str
     country: str
 
+    users: list['User'] = Relationship(back_populates="organisation")
+    groups: list['Group'] = Relationship(back_populates="organisation")
+    chat_bots: list['EquipmentManualChatBot'] = Relationship(back_populates="organisation")
+
+# Role
+class Role(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+
+    users: list['User'] = Relationship(back_populates="role")
 
 # User Models
 class UserBase(SQLModel):
@@ -32,13 +42,40 @@ class UserBase(SQLModel):
     last_name: str
     disabled: bool | None = None
 
+class EquipmentManualChatbotUser(SQLModel, table=True):
+    chatbot_id: int = Field(foreign_key="equipmentmanualchatbot.id", primary_key=True)
+    user_id: int = Field(foreign_key="user.id", primary_key=True)
+
+# class UserRole(SQLModel, table=True):
+#     user_id: int = Field(foreign_key="user.id", primary_key=True)
+#     role_id: int = Field(foreign_key="role.id", primary_key=True)
+
+class UserGroup(SQLModel, table=True):
+    user_id: int = Field(foreign_key="user.id", primary_key=True)
+    group_id: int = Field(foreign_key="group.id", primary_key=True)
+
 class User(UserBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    organisation_id: int = Field(foreign_key="organsation.id")
     hashed_password: str
+
+    organisation_id: int = Field(foreign_key="organisation.id")
+    organisation: Organisation = Relationship(back_populates="users")
+
+    created_chat_bots: list["EquipmentManualChatBot"] = Relationship(back_populates="creator")
+    
+    chat_bots: list["EquipmentManualChatBot"] = Relationship(back_populates="users", link_model=EquipmentManualChatbotUser)
+    
+    role_id: int = Field(foreign_key="role.id")
+    role: Role = Relationship(back_populates="users")
+
+    groups: list["Group"] = Relationship(back_populates="users", link_model=UserGroup)
 
 class UserWithId(UserBase):
     id: int
+
+class UserPublic(UserBase):
+    id: int
+    role: str | None
 
 class UserCreateBase(UserBase):
     username: str
@@ -50,28 +87,26 @@ class UserCreateBase(UserBase):
 class UserCreateForm(UserCreateBase):
     password: str
 
-class EquipmentManualChatbotUser(SQLModel, table=True):
-    chatbot_id: int = Field(foreign_key="equipmentmanualchatbot.id")
-    user_id: int = Field(foreign_key="user.id")
 
-# Role
-class Role(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    name: str = Field(index=True)
+
+
     
-class UserRole(SQLModel, table=True):
-    user_id: int = Field(foreign_key="user.id")
-    role_id: int = Field(foreign_key="role.id")
+
+class EquipmentManualChatbotGroup(SQLModel, table=True):
+    chatbot_id: int = Field(foreign_key="equipmentmanualchatbot.id", primary_key=True)
+    group_id: int = Field(foreign_key="group.id", primary_key=True)
 
 # Group   
 class Group(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True)
-    organisation_id: int = Field(foreign_key="organsation.id")
 
-class UserGroup(SQLModel, table=True):
-    user_id: int = Field(foreign_key="user.id")
-    group_id: int = Field(foreign_key="group.id")
+    organisation_id: int = Field(foreign_key="organisation.id")
+    organisation: Organisation = Relationship(back_populates="groups")
+
+    users: list['User'] = Relationship(back_populates="groups", link_model=UserGroup)
+
+    chat_bots: list['EquipmentManualChatBot'] = Relationship(back_populates="groups", link_model=EquipmentManualChatbotGroup)
 
 
 
@@ -106,11 +141,21 @@ class EquipmentManualChatBotBase(SQLModel):
     collection_name: str
     system_prompt: str
 
+
+
 class EquipmentManualChatBot(EquipmentManualChatBotBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     file_name: str
-    organisation_id: int = Field(foreign_key="organsation.id")
+
+    organisation_id: int = Field(foreign_key="organisation.id")
+    organisation: Organisation = Relationship(back_populates="chat_bots")
+    
     creator_id: int = Field(foreign_key="user.id")
+    creator: User = Relationship(back_populates="created_chat_bots")
+
+    users: list['User'] = Relationship(back_populates="chat_bots", link_model=EquipmentManualChatbotUser)
+
+    groups: list['Group'] = Relationship(back_populates="chat_bots", link_model=EquipmentManualChatbotGroup)
 
 
 class EquipmentManualChatBotForm(EquipmentManualChatBotBase):
@@ -141,8 +186,3 @@ class EquipmentManualChatBotUpdate(EquipmentManualChatBotBase):
     file_name: str | None = None
     collection_name: str | None = None
     system_prompt: str | None = None
-
-
-class EquipmentManualChatbotGroup(SQLModel, table=True):
-    chatbot_id: int = Field(foreign_key="equipmentmanualchatbot.id")
-    group_id: int = Field(foreign_key="group.id")

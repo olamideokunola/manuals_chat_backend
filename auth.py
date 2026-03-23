@@ -12,7 +12,7 @@ import os
 
 from sqlmodel import select
 
-from .src.manuals.models import UserWithId, User, TokenData, UserCreateForm 
+from .src.manuals.models import UserWithId, User, TokenData, UserCreateForm, UserPublic
 from .dependencies import SessionDep
 
 load_dotenv()
@@ -102,6 +102,7 @@ async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)], 
     session: SessionDep
 ):
+    print('token', token)
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -118,23 +119,39 @@ async def get_current_user(
     user = await get_user(session, username=token_data.username)
     if user is None:
         raise credentials_exception
+
     return user
 
 
+
 async def get_current_active_user(
-    current_user: Annotated[UserWithId, Depends(get_current_user)], 
+    current_user: Annotated[User, Depends(get_current_user)], 
     session: SessionDep
 ):
     if current_user.disabled:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
-
+async def get_current_active_user_as_public_user(
+    user: Annotated[User, Depends(get_current_active_user)], 
+    session: SessionDep
+):
+    publicUser = UserPublic(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        disabled=user.disabled,
+        role=user.role.name,
+        organisation=user.organisation.name
+    )
+    return publicUser
 
 async def create_user(
     data: UserCreateForm, 
     session: SessionDep,
-    existing_user: Annotated[UserWithId, Depends(get_user_by_email)]
+    existing_user: Annotated[User, Depends(get_user_by_email)]
 ):
     """
     curl -F "username=uname" -F "first_name=FirstName" -F "last_name=LastName" -F "password=testing" -F "email=mymail" -F "disabled=False"  http://localhost:8000/users/create

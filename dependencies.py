@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from typing import Annotated
 
 from .src.manuals.db import engine
-from .src.manuals.models import EquipmentManualChatBot, EquipmentManualChatBotFormUpdate, EquipmentManualChatBotUpdate, EquipmentManualChatBotForm
+from .src.manuals.models import EquipmentManualChatBot, EquipmentManualChatBotFormUpdate, EquipmentManualChatBotUpdate, EquipmentManualChatBotForm, User
 from .src.manuals.embeddings import AgentWrapper, EquipmentManualContextManager
 
 
@@ -60,7 +60,7 @@ class DataStoreManager:
         chatbot_config = self.session.get(EquipmentManualChatBot, chat_id)
         return chatbot_config
     
-    def save_chat_config(self, data: EquipmentManualChatBot, file_name: str):
+    def save_chat_config(self, data: EquipmentManualChatBot, file_name: str, current_user: User):
         file_extension = data.file.filename.split('.')[-1]
         manualChatBot = EquipmentManualChatBot(
             name=data.name,
@@ -71,7 +71,9 @@ class DataStoreManager:
             owner=data.owner,
             file_name=file_name,
             collection_name=data.collection_name,
-            system_prompt=data.system_prompt
+            system_prompt=data.system_prompt,
+            organisation_id=current_user.organisation_id,
+            creator_id=current_user.id
         )
         
         self.session.add(manualChatBot)
@@ -80,10 +82,12 @@ class DataStoreManager:
 
         return manualChatBot
 
-    def get_chabot_configs_for_owner(self, owner: str) -> list[EquipmentManualChatBot]:
-        owner_chatbots_stmt = select(EquipmentManualChatBot).where(EquipmentManualChatBot.owner == owner)
+    def get_chabot_configs_for_owner(self, creator_id: int) -> list[EquipmentManualChatBot]:
+        owner_chatbots_stmt = select(EquipmentManualChatBot).where(EquipmentManualChatBot.creator_id == creator_id)
+
         results = self.session.exec(owner_chatbots_stmt)
         return results
+
 
     def update_chat_config(self, chat_id:int, data: EquipmentManualChatBotFormUpdate, file_name:str | None=None):
         chatbot_config = self.get_chatbot_config(chat_id)
