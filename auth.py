@@ -10,7 +10,10 @@ from jwt.exceptions import InvalidTokenError
 from dotenv import load_dotenv, dotenv_values
 import os
 
-from .src.manuals.models import User, UserInDB, TokenData 
+from sqlmodel import select
+
+from .src.manuals.models import UserWithId, User, TokenData, UserCreateForm, UserPublic
+from .dependencies import SessionDep
 
 load_dotenv()
 AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
@@ -48,10 +51,24 @@ def verify_password(plain_password, hashed_password):
 def get_password_hash(password):
     return password_hash.hash(password)
 
-def get_user(db, username: str):
-    if username in db:
-        user_dict = db[username]
-        return UserInDB(**user_dict)
+async def get_user_by_username(username: str, session: SessionDep):
+    find_user_stmt = select(User).where(User.username == username)
+    results = session.exec(find_user_stmt)
+    user = results.first()
+    return user
+
+async def get_user_by_email(data: UserCreateForm, session: SessionDep):
+    find_user_stmt = select(User).where(User.email == data.email)
+    results = session.exec(find_user_stmt)
+    if not results:
+        return None
+    user = results.first()
+    return user
+
+async def get_user(session, username: str):
+    user = await get_user_by_username(username, session)
+    if user:
+        return user
     
 def decode_token(token):
     # This doesn't provide any security at all
@@ -60,8 +77,8 @@ def decode_token(token):
     return user
 
 
-def authenticate_user(fake_db, username: str, password: str):
-    user = get_user(fake_db, username)
+async def authenticate_user(session: SessionDep, username: str, password: str):
+    user = await get_user_by_username(username, session)
     if not user:
         verify_password(password, DUMMY_HASH)
         return False
@@ -81,7 +98,11 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     return encoded_jwt
 
 
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)], 
+    session: SessionDep
+):
+    print('token', token)
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -95,15 +116,61 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
         token_data = TokenData(username=username)
     except InvalidTokenError:
         raise credentials_exception
-    user = get_user(fake_users_db, username=token_data.username)
+    user = await get_user(session, username=token_data.username)
     if user is None:
         raise credentials_exception
+
     return user
 
 
+
 async def get_current_active_user(
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)], 
+    session: SessionDep
 ):
     if current_user.disabled:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
+
+async def get_current_active_user_as_public_user(
+    user: Annotated[User, Depends(get_current_active_user)], 
+    session: SessionDep
+):
+    publicUser = UserPublic(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        disabled=user.disabled,
+        role=user.role.name,
+        organisation=user.organisation.name
+    )
+    return publicUser
+
+async def create_user(
+    data: UserCreateForm, 
+    session: SessionDep,
+    existing_user: Annotated[User, Depends(get_user_by_email)]
+):
+    """
+    curl -F "username=uname" -F "first_name=FirstName" -F "last_name=LastName" -F "password=testing" -F "email=mymail" -F "disabled=False"  http://localhost:8000/users/create
+
+    """
+    if existing_user:
+        raise HTTPException(status_code=409, detail="user exists")  
+    
+    hashed_password = get_password_hash(data.password)
+    user = User(
+        username=data.username,
+        email=data.email,
+        first_name=data.first_name,
+        last_name=data.last_name,
+        disabled=data.disabled,
+        hashed_password=hashed_password
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    return user

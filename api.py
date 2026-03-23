@@ -20,8 +20,8 @@ from jwt.exceptions import InvalidTokenError
 from .dependencies import AgentManager, ManualContextManager, SessionDep, form_data, get_session, get_chatbot_config, DataStoreManager, FileUploader
 
 from .src.manuals.embeddings import EquipmentManualContextManager
-from .auth import decode_token, get_current_user, hash_password, fake_users_db, get_current_active_user, create_access_token, authenticate_user
-from .src.manuals.models import User, UserInDB
+from .auth import decode_token, get_current_user, hash_password, fake_users_db, get_current_active_user, create_access_token, authenticate_user, create_user, get_current_active_user_as_public_user
+from .src.manuals.models import UserWithId, User, UserCreateForm, Token, Organisation, UserPublic
 
 print(os.getcwd())
 
@@ -32,8 +32,6 @@ from .src.manuals.db import create_db_and_tables, engine
 from .src.manuals.models import EquipmentManualChatBot, EquipmentManualChatBotFormUpdate, EquipmentManualChatBotForm, EquipmentManualChatBotUpdate
 
 from dotenv import load_dotenv, dotenv_values
-
-from .src.manuals.models import User, UserInDB, Token
 
 load_dotenv()
 AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
@@ -168,7 +166,8 @@ async def create_chatbot_config(
 	data: Annotated[EquipmentManualChatBotForm, Form()],
 	context_manager: Annotated[ManualContextManager, Depends()],
 	file_uploader: Annotated[FileUploader, Depends()],
-	datastore_manager: Annotated[DataStoreManager, Depends()]
+	datastore_manager: Annotated[DataStoreManager, Depends()],
+	current_user: Annotated[User, Depends(get_current_user)]
 ):
 
 	"""
@@ -192,24 +191,56 @@ async def create_chatbot_config(
 	context_manager.setup_vector_store()
 	
 	# save info to database
-	manual_chatbot = datastore_manager.save_chat_config(data, file_uploader.file_name)
+	manual_chatbot = datastore_manager.save_chat_config(data, file_uploader.file_name, current_user)
 
 	return manual_chatbot
 
 
-@app.get("/chats/owner/{owner}", response_model=list[EquipmentManualChatBot])
-async def retrieve_chatbots(
-	owner: str,
-	datastore_manager: Annotated[DataStoreManager, Depends()]
+@app.get("/admin/chats", response_model=list[EquipmentManualChatBot])
+async def retrieve_admin_chatbots(
+	datastore_manager: Annotated[DataStoreManager, Depends()],
+	current_user: Annotated[User, Depends(get_current_active_user)],
 ):
 	"""
-	curl http://localhost:8000/chats/owner/Me
+	curl -H "Authorization: Bearer Token" http://localhost:8000/admin/chats
 	"""
-	chatbots = datastore_manager.get_chabot_configs_for_owner(owner)
+	if not current_user:
+		raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unknown username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+	
+	if current_user.role.name != 'admin':
+		raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unathorised",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) 
+
+	chatbots = datastore_manager.get_chabot_configs_for_owner(current_user.id)
 	
 	return chatbots
 
 
+@app.get("/chats", response_model=list[EquipmentManualChatBot])
+async def retrieve_user_chatbots(
+	datastore_manager: Annotated[DataStoreManager, Depends()],
+	current_user: Annotated[User, Depends(get_current_active_user)],
+):
+	"""
+	curl -H "Authorization: Bearer Token" http://localhost:8000/chats
+	"""
+	if not current_user:
+		raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unknown username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+	
+	chatbots = current_user.chat_bots
+	
+	return chatbots
 
 @app.get("/chats/{chat_id}")
 async def start_chat(
@@ -322,34 +353,92 @@ async def send_user_query_v1(
 		media_type="application/x-ndjson" #media_type="text/event-stream"
 	)
 
-# AUTH
+# AUTHENTICATION
 
 @app.post("/token")
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+	session: SessionDep
 ) -> Token:
-    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(
+	"""
+	curl call:
+
+	curl -F "username=admin.user@mail.com" -F "password=allow" http://localhost:8000/token
+	"""
+	user = await authenticate_user(session, form_data.username, form_data.password)
+	if not user:
+		raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
+	access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+	access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
-    return Token(access_token=access_token, token_type="bearer")
+	return Token(access_token=access_token, token_type="bearer")
 
 
 @app.get("/users/me/")
 async def read_users_me(
-    current_user: Annotated[User, Depends(get_current_active_user)],
-) -> User:
+	session: SessionDep,
+    current_user: Annotated[UserPublic, Depends(get_current_active_user_as_public_user)],
+) -> UserPublic:
     return current_user
 
 @app.get("/users/me/items/")
 async def read_own_items(
-    current_user: Annotated[User, Depends(get_current_active_user)],
+	session: SessionDep,
+    current_user: Annotated[UserWithId, Depends(get_current_active_user)],
 ):
     return [{"item_id": "Foo", "owner": current_user.username}]
+
+@app.post("/users/create")
+async def create_user_account(
+	data: Annotated[UserCreateForm, Form()], 
+	user: Annotated[User, Depends(create_user)]
+) -> Token:
+	"""
+	curl call:
+
+	curl -F "username=Who are you?" -F "first_name=FirstName" -F "last_name=LastName" -F "password=testing"  http://localhost:8000/users/create
+	"""
+	print('form_data is: {}'.format(data))
+	print('user is {}'.format(user))
+	if not user:
+		raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="User creation failed",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+	access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+	access_token = create_access_token(
+		data={"sub": user.username}, expires_delta=access_token_expires
+    )
+	return Token(access_token=access_token, token_type="bearer")
+
+@app.post("/organisations/create")
+async def create_organisation(
+	data: Annotated[Organisation, Form()],
+	# current_user: Annotated[UserWithId, Depends(get_current_active_user)],
+	session: SessionDep
+) -> Organisation:
+
+	# if not current_user:
+	# 	raise HTTPException(
+    #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         detail="User does not exist",
+    #         headers={"WWW-Authenticate": "Bearer"},
+    #     )
+
+	organisation = Organisation(
+		name=data.name,
+		domain=data.domain,
+		address=data.address,
+		country=data.country,
+	)
+	session.add(organisation)
+	session.commit()
+	session.refresh(organisation)
+
+	return organisation
